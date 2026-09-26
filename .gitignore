@@ -179,3 +179,18 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Virtual environment
+.venv/
+
+# PRC competition datasets
+data/raw/*
+data/processed/*
+
+# Competition submissions
+submissions/*
+
+# Keep empty directories
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!submissions/.gitkeep
