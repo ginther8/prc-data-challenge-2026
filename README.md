@@ -5,7 +5,7 @@ Our solution for the **PRC Data Challenge 2026**: predicting departure taxi-out 
 (EDDF, EDDM, EGLL, EHAM, LEBL, LEMD, LFPG, LIRF, LSZH, LTFM).
 Ranking metric: RMSE on all January and July 2026 departures (344,841 flights).
 
-**Best leaderboard score: 267.92 (submission V52).**
+**Best leaderboard score: 265.79 (submission V73).**
 
 ## How the solution works
 
@@ -19,6 +19,7 @@ Ranking metric: RMSE on all January and July 2026 departures (344,841 flights).
    - CatBoost + LightGBM, 3 seeds
    - learns the remaining base-model error using open ADS-B ground tracks
    - adds airport-context features from recent arrivals/departures
+   - adds gate-retention features (flights overdue at the gate, active taxiing traffic on the same runway)
    - bounded residual correction
 
 3. Final post-processing
@@ -33,11 +34,11 @@ Ranking metric: RMSE on all January and July 2026 departures (344,841 flights).
 
 ```text
 V17 base
-  → ADS-B + airport-context corrector
+  → ADS-B + airport-context + gate-retention corrector
   → LOBT window clip
   → MISSING_4 per-airport line
   → Rome (LIRF) schedule-copy model
-  → submission V52
+  → submission V73
 ```
 
 ## Leaderboard history
@@ -48,7 +49,8 @@ V17 base
 | V6 | + ADS-B corrector | 300.70 |
 | V15 | V17 base + context corrector + LOBT clip | 281.22 |
 | V51 | + MISSING_4 per-airport line | 272.19 |
-| **V52** | + Rome schedule-copy model | **267.92** |
+| V52 | + Rome schedule-copy model | 267.92 |
+| **V73** | + gate-retention features in the corrector | **265.79** |
 
 ## Repository layout
 
@@ -76,6 +78,7 @@ Final honest JAN/JUL validation for the current pipeline:
 | + ADS-B corrector + context | 346.18 | 292.57 | 317.62 |
 | + MISSING_4 line | 338.09 | 283.21 | 308.91 |
 | + Rome schedule-copy model | 336.48 | 280.73 | 306.86 |
+| + gate-retention features (V73) | 335.82 | 280.19 | 306.27 |
 
 Leaderboard scores were used only as a final check, not as the main validation signal.
 
@@ -91,7 +94,25 @@ Leaderboard scores were used only as a final check, not as the main validation s
 Competition data and downloaded external datasets are not committed to this repository.
 See section 5 of **[README_adsb_pipeline.md](README_adsb_pipeline.md)** for exact attribution and usage.
 
-## Reproducing V52
+## Base model (V17) scripts
+
+The base-model track lives in `src/` (exploration and CatBoost training history) and in these
+entry points:
+
+| Script | Role |
+|---|---|
+| `reproduce_v8.py` | reproduces the V8 reference features / submission |
+| `experiments/run_v5_c2_rigorous_janjul.py` | C2 base model with honest JAN/JUL validation |
+| `experiments/run_v7_c2f3_oof_export.py` | exports honest JAN/JUL OOF and the ranking predictions (C2 + F3 for MISSING_4) |
+| `experiments/build_v11_queue_features.py` | queue / congestion features |
+| `experiments/v16_geometry_features.py`, `experiments/v16_apt_geometry.py` | airport-geometry (G1) features |
+| `experiments/run_v15_complete_queue_ablation.py` | queue-feature ablation on COMPLETE rows |
+| `experiments/build_v17_g1_production.py` | builds the final V17 base (C2Q_CLEAN + G1 50/50) used by the corrector |
+
+The corrector consumes the V17 outputs: honest OOF `v19_quick_best_oof_{JAN,JUL}.parquet`
+and ranking predictions `v17_lite_blend_ranking.parquet` (see README_adsb_pipeline.md, section 1).
+
+## Reproducing V73
 
 The exact run order and commands are documented in **[README_adsb_pipeline.md](README_adsb_pipeline.md)**.
 In summary:
@@ -99,22 +120,15 @@ In summary:
 ```text
 1. build the 2025 base/OOF inputs
 2. extract and featurize ADS-B data
-3. build airport-context features
+3. build airport-context and gate-retention features
 4. train and apply the CatBoost + LightGBM corrector
 5. apply the LOBT clip
 6. apply the MISSING_4 per-airport line
 7. apply the Rome schedule-copy model
-8. write the final V52 parquet submission
+8. write the final V73 parquet submission
 ```
 
 The final submission contains only the required prediction output and is uploaded separately from the source repository.
-
-## Credits
-
-Several modelling ideas were informed by team **outgoing-boat**'s public solution:
-`github.com/EnioAguiar/prc-taxiout-2026` (GPL-3.0).
-
-Ideas credited include airport-context features, the LOBT window, the per-airport MISSING_4 line, and the schedule-copy concept. All code in this repository is our own independent implementation.
 
 ## Licence
 

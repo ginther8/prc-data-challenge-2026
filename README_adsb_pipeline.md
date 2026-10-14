@@ -32,6 +32,7 @@ training uses 2025 only.
 | 4 | `metar_download.py` | Airport weather (IEM ASOS/METAR) — tested, **not used** in the final corrector | `data/external/metar/metar_10apt.parquet` | minutes |
 | 5 | `adsb_features.py` | Per-departure ADS-B features (v4): callsign → aircraft match (incl. IATA→ICAO), final ground segment, first movement, parking-spot distances, OSM stand distances, runway distances | `data/processed/adsb_features.parquet` | ~30–40 min (`--months all`) |
 | 6 | `context_features.py` | Airport-context features from movements strictly **before** the departure's takeoff: arrival taxi-in (30/60 min, same runway), time since last arrival at the same stand, ADS-B taxi duration and MVT−AOBT_3 of earlier departures | `data/processed/context_features.parquet` | ~20 s |
+| 6b | `gate_features.py` | Gate-retention features at each departure's AOBT_3: departures overdue at the gate (EOBT ≤ t < AOBT_3; all / same runway), active same-runway departures (AOBT_3 ≤ t < MVT), recent mean AOBT_3−SCHED, departures in the last hour | `data/processed/gate_features.parquet` | ~25 s |
 | 7 | `adsb_corrector.py` | Validates (JAN↔JUL) and trains the corrector on the base model's honest OOF predictions; builds a submission | `reports/adsb_corrector.txt`, `submissions/vigorous-glove_vN.parquet` | ~6 min validation |
 | 8 | `lobt_clip.py` | Projects each prediction onto the LOBT window `[MVT−LOBT−3606, MVT−LOBT+3606]` s, floor 0 | `reports/lobt_clip.txt`, new submission | seconds |
 | 9 | `nm_line.py` | For MISSING_4 rows (AOBT_3, EOBT_1, IOBT, LOBT all missing) with MVT−SCHED > 6 h: per-airport line `taxi = a + b·(MVT−SCHED)` fitted on 2025 (airports with ≥ 20 such rows) | `reports/nm_line.txt`, new submission | seconds |
@@ -55,30 +56,31 @@ python -u experiments\run_janjul_v4_cached.py
 python -u experiments\adsb_extract.py --workers 8
 python -u experiments\adsb_features.py --months all
 python -u experiments\context_features.py
+python -u experiments\gate_features.py
 
 # 1) corrector: validation (JAN <-> JUL, both months must improve)
-python -u experiments\adsb_corrector.py --validate-only --context --seeds 3 `
+python -u experiments\adsb_corrector.py --validate-only --gate --context --seeds 3 `
     --second-model lgbm --drop-features adsb_npts --m4-from-v4 `
     --base-oof data\processed\v19_quick_best_oof_JAN.parquet data\processed\v19_quick_best_oof_JUL.parquet `
-    --save-oof data\processed\corrector_oof_ctx.parquet
+    --save-oof data\processed\corrector_oof_gate.parquet
 
 # 2) corrector: build on the 2026 ranking file
-python -u experiments\adsb_corrector.py --version 50 --context --seeds 3 `
+python -u experiments\adsb_corrector.py --version 70 --gate --context --seeds 3 `
     --second-model lgbm --drop-features adsb_npts --m4-from-v4 `
     --base-oof data\processed\v19_quick_best_oof_JAN.parquet data\processed\v19_quick_best_oof_JUL.parquet `
     --base-submission submissions\v17_lite_blend_ranking.parquet
 
 # 3) LOBT window clip
-python -u experiments\lobt_clip.py --oof data\processed\corrector_oof_ctx.parquet
-python -u experiments\lobt_clip.py --submission submissions\vigorous-glove_v50.parquet --version 15
+python -u experiments\lobt_clip.py --oof data\processed\corrector_oof_gate.parquet
+python -u experiments\lobt_clip.py --submission submissions\vigorous-glove_v70.parquet --version 71
 
 # 4) MISSING_4 per-airport line (> 6 h)
-python -u experiments\nm_line.py --oof data\processed\corrector_oof_ctx.parquet
-python -u experiments\nm_line.py --submission submissions\vigorous-glove_v15.parquet --version 51
+python -u experiments\nm_line.py --oof data\processed\corrector_oof_gate.parquet
+python -u experiments\nm_line.py --submission submissions\vigorous-glove_v71.parquet --version 72
 
 # 5) Rome schedule-copy model
-python -u experiments\rome_copy.py --oof data\processed\corrector_oof_ctx.parquet
-python -u experiments\rome_copy.py --submission submissions\vigorous-glove_v51.parquet --version 52
+python -u experiments\rome_copy.py --oof data\processed\corrector_oof_gate.parquet
+python -u experiments\rome_copy.py --submission submissions\vigorous-glove_v72.parquet --version 73
 ```
 
 Useful corrector options:
@@ -88,6 +90,7 @@ Useful corrector options:
 | `--base-oof` / `--base-submission` | base model's honest OOF files and its 2026 ranking file |
 | `--m4-from-v4` | MISSING_4 rows use the V4-style F3 OOF (matches the ranking file) |
 | `--context` | add the airport-context features (`context_features.parquet`) |
+| `--gate` | add the gate-retention features (`gate_features.parquet`) |
 | `--seeds N` | average N seeds |
 | `--second-model lgbm` | equal-weight average with a LightGBM corrector |
 | `--drop-features a,b` | leave features out (e.g. `adsb_npts`, a receiver-density feature that drifts 2025 → 2026) |
@@ -125,6 +128,7 @@ Honest JAN/JUL results of the current pipeline:
 | + ADS-B corrector + context | 346.18 | 292.57 | 317.62 |
 | + MISSING_4 line (> 6 h) | 338.09 | 283.21 | 308.91 |
 | + Rome schedule-copy model | 336.48 | 280.73 | 306.86 |
+| + gate-retention features in the corrector (V73) | 335.82 | 280.19 | 306.27 |
 
 (Base row uses the V4-style F3 on MISSING_4 rows, as in the corrector. The LOBT clip
 alone on the V17 OOF: 336.86 → 334.75.)
@@ -151,7 +155,8 @@ free attempt (ranking uses the best submission) and scored 267.92 on the leaderb
 | V14 | V17 base + ADS-B corrector, 3 seeds | 288.91 |
 | V15 | V14 setup + context features + LOBT clip | 281.22 |
 | V51 | V15 + MISSING_4 per-airport line (> 6 h) | 272.19 |
-| V52 | V51 + Rome (LIRF) schedule-copy model, 50/50 with V51 | **267.92** |
+| V52 | V51 + Rome (LIRF) schedule-copy model, 50/50 with V51 | 267.92 |
+| **V73** | V52 pipeline with gate-retention features in the corrector (`--gate`) | **265.79** |
 
 ---
 
@@ -167,7 +172,7 @@ free attempt (ranking uses the best submission) and scored 267.92 on the leaderb
 | PRC Data Challenge 2026 dataset | training / ranking data | challenge terms |
 
 Ideas credited to team **outgoing-boat** (github.com/EnioAguiar/prc-taxiout-2026, GPL-3.0):
-the airport-context features, the LOBT window (verified independently on all 2,062,577
+the airport-context and gate-retention features, the LOBT window (verified independently on all 2,062,577
 2025 departures with a LOBT: max |BLOCK − LOBT| = 3606 s) and the per-airport line for
 MISSING_4 rows above 6 h, and the schedule-copy idea behind the Rome model. All code here is an independent re-implementation; no code was copied.
 
