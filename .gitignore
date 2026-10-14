@@ -186,6 +186,7 @@ cython_debug/
 # PRC competition datasets
 data/raw/*
 data/processed/*
+data/external/*
 
 # Competition submissions
 submissions/*
@@ -193,4 +194,17 @@ submissions/*
 # Keep empty directories
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/external/.gitkeep
 !submissions/.gitkeep
+# Model / run outputs (not code)
+catboost_info/
+models/
+reports/
+*_result.json
+eda_output.txt
+
+# Third-party reference code (not ours to publish)
+reference/
+
+# Stray file
+/re
